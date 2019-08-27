@@ -1,16 +1,15 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
 
 	errors "golang.org/x/xerrors"
+	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
-	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/pluginpb"
 )
@@ -26,15 +25,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	registry, err := makeFilesRegistry(req)
+	resp, err := processReq(req)
 	if err != nil {
 		return err
 	}
-	registry.RangeFiles(func(desc protoreflect.FileDescriptor) bool {
-		fmt.Println(desc.FullName())
-		return true
-	})
-	return nil
+	return emitResp(resp)
 }
 
 func parseReq(r io.Reader) (*pluginpb.CodeGeneratorRequest, error) {
@@ -47,6 +42,37 @@ func parseReq(r io.Reader) (*pluginpb.CodeGeneratorRequest, error) {
 		return nil, errors.Errorf("proto.Unmarshal error: %v", err)
 	}
 	return req, nil
+}
+
+func emitResp(resp *pluginpb.CodeGeneratorResponse) error {
+	buf, err := proto.Marshal(resp)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stdout.Write(buf); err != nil {
+		return err
+	}
+	return nil
+}
+
+func processReq(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
+	files := make([]*pluginpb.CodeGeneratorResponse_File, 0, len(req.ProtoFile))
+	for _, f := range req.ProtoFile {
+		content, err := prototext.MarshalOptions{
+			Indent: "  ",
+		}.Marshal(f)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, &pluginpb.CodeGeneratorResponse_File{
+			Name:    proto.String(*f.Name + ".dump"),
+			Content: proto.String(string(content)),
+		})
+	}
+
+	return &pluginpb.CodeGeneratorResponse{
+		File: files,
+	}, nil
 }
 
 func makeFilesRegistry(req *pluginpb.CodeGeneratorRequest) (*protoregistry.Files, error) {
